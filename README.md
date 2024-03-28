@@ -48,3 +48,11 @@ public interface ApplicationContext extends AutoCloseable{
 ```
 
 `AnnotationConfigApplicationContext` 是它的实现类，目前只支持对Bean的单例管理
+
+## 待办:
+
+> 实现AOP
+> JDBC和事务管理
+> WebMVC
+
+
