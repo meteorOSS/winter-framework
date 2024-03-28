@@ -1,4 +1,4 @@
-package com.meteor.winter.ioc.resource;
+package com.meteor.winter.io;
 
 import lombok.AllArgsConstructor;
 

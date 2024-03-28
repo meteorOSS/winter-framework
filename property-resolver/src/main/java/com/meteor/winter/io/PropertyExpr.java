@@ -1,4 +1,4 @@
-package property;
+package com.meteor.winter.io;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;

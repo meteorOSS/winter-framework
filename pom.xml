@@ -6,7 +6,12 @@
 
     <groupId>com.meteor</groupId>
     <artifactId>winter-framework</artifactId>
+    <packaging>pom</packaging>
     <version>1.0-SNAPSHOT</version>
+    <modules>
+        <module>resource-resolver</module>
+        <module>property-resolver</module>
+    </modules>
 
     <properties>
         <maven.compiler.source>8</maven.compiler.source>
