@@ -17,10 +17,15 @@ public class ResourceResolver {
     private String base; // 指定的包名
 
     // 扫描包下所有文件
-    public <T> List<T> scan(Function<Resource,T> mapper) throws URISyntaxException, IOException {
+    public <T> List<T> scan(Function<Resource,T> mapper)  {
         List<T> ts = new ArrayList<>();
         String path = base.replace(".", "/");
-        URI uri = ClassLoader.getSystemResource(path).toURI();
+        URI uri = null;
+        try {
+            uri = ClassLoader.getSystemResource(path).toURI();
+        } catch (URISyntaxException e) {
+            throw new RuntimeException(e);
+        }
         Path root = null;
         // 如果资源在jar中的话，获取与之关联的文件目录
         if(uri.toString().startsWith("jar:")){
@@ -28,8 +33,12 @@ public class ResourceResolver {
                 root = FileSystems.getFileSystem(uri).getPath(path);
             }catch (FileSystemNotFoundException fileSystemNotFoundException){
                 // 如果文件系统不存在的话，新建
-                root = FileSystems.newFileSystem(uri,new HashMap<>())
-                        .getPath(path);
+                try {
+                    root = FileSystems.newFileSystem(uri,new HashMap<>())
+                            .getPath(path);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }
         }else root = Paths.get(uri);
         try(Stream<Path> walk = Files.walk(root)){
@@ -41,6 +50,8 @@ public class ResourceResolver {
                 Resource resource = new Resource(filePath,fileName);
                 ts.add(mapper.apply(resource));
             });
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
         return ts;
     }
