@@ -52,7 +52,7 @@ public interface ApplicationContext extends AutoCloseable{
 ## 待办:
 
 > 实现AOP
-> JDBC和事务管理
-> WebMVC
+JDBC和事务管理
+WebMVC
 
 
