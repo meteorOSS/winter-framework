@@ -1,17 +1,15 @@
 package com.meteor.winter.context;
 
 import com.meteor.winter.annotation.*;
-import com.meteor.winter.exception.BeanDefinitionException;
 import com.meteor.winter.exception.NoUniqueBeanDefinitionException;
 import com.meteor.winter.io.PropertyResolver;
-import com.meteor.winter.io.Resource;
 import com.meteor.winter.io.ResourceResolver;
 import com.meteor.winter.util.ClassUtil;
 import lombok.Getter;
+import lombok.SneakyThrows;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -19,10 +17,115 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
 
     @Getter private Map<String,BeanDefinition> beans;
 
+    // 这个字段的作用是解决强注入依赖循环问题
+    // 如对于以下两个bean
+    // ``` java
+    // class A{ B b; A(B b) {this.b = b}}
+    // class B{ A b; B(A a) {this.a = a}}
+    // ```
+    // 这是无论如何都无法解决的，所以我们要在创建Bean的时候将他们检查出来
+    Set<String> creatingBeanNames;
 
-    public AnnotationConfigApplicationContext(Class<?> configClass){
+
+    PropertyResolver propertyResolver;
+
+    public AnnotationConfigApplicationContext(Class<?> configClass,PropertyResolver propertyResolver){
         Set<String> classNameSet = scanForClassName(configClass);
         this.beans = createBeanDefinitions(classNameSet);
+        this.propertyResolver = propertyResolver;
+        this.creatingBeanNames = new HashSet<>();
+
+        System.out.println(this.beans.size());
+
+        // @Configuration注解的必须先创建出来（因为其中包含了Bean)
+        this.beans.values().stream().filter(this::isConfigurationDef)
+                .sorted()
+                .forEach(beanDefinition -> createBeanForce(beanDefinition));
+
+        // 其他的Bean
+        this.beans.values().stream().filter(beanDefinition -> beanDefinition.getInstance()==null) // 过滤出所有实例还为空的BeanDef
+                .sorted(new Comparator<BeanDefinition>() {
+                    @Override
+                    public int compare(BeanDefinition o1, BeanDefinition o2) {
+                        return o1.getOrder() - o2.getOrder();
+                    }
+                })
+                .collect(Collectors.toList())
+                .forEach(beanDefinition -> createBeanForce(beanDefinition));
+    }
+
+    private boolean isConfigurationDef(BeanDefinition beanDefinition){
+        return beanDefinition.getAClass().getAnnotation(Configuration.class)!=null;
+    }
+
+    /**
+     * 这里处理工厂方法，构造器两种强注入
+     * @param beanDefinition
+     * @return
+     */
+    @SneakyThrows
+    public Object createBeanForce(BeanDefinition beanDefinition){
+        System.out.println("createBean");
+        // 检测到重复创建导致的依赖循环
+        if(!this.creatingBeanNames.add(beanDefinition.getName())){
+            throw new Exception(String.format("%s 出现依赖注入循环",beanDefinition.getName()));
+        }
+
+        Executable executable = null;
+
+        // 如果Bean实例以工厂方法创建的话
+        if(beanDefinition.getFactoryMethod() !=null ){
+            executable = beanDefinition.getFactoryMethod(); // 取得工厂方法
+        }else executable = beanDefinition.getConstructor(); // 否则取得构造方法
+
+        Parameter[] parameters = executable.getParameters();
+        Annotation[][] parameterAnnotations = executable.getParameterAnnotations();
+        // 将要填充的具体值
+        Object[] args = new Object[parameters.length];
+        for (int i = 0; i < parameters.length; i++) {
+            Parameter parameter = parameters[i];
+            Annotation[] parameterAnnotation = parameterAnnotations[i];
+
+            Autowired autowired = ClassUtil.getAnnotation(parameterAnnotation, Autowired.class);
+            Value value  = ClassUtil.getAnnotation(parameterAnnotation, Value.class);
+
+            Class<?> type = parameter.getType();
+
+            // 填充@Value注解的值
+            if(value!=null){
+                args[i] = propertyResolver.getProperty(value.value(),type);
+            }else {
+                // 如果是@AutoWried注入
+                String name = autowired.name();
+
+                // 判断name是否为空，如果是的话，根据类型查找依赖Bean
+                BeanDefinition requiredBeanDef = name.isEmpty() ? findBeanDef(type)
+                        :findBeanDef(name,type);
+
+                Object instance = requiredBeanDef.getInstance();
+
+                // 如果依赖的Bean未创建的话，递归调用本方法创建
+                if(!isConfigurationDef(requiredBeanDef)&&instance == null){
+                    instance = createBean(requiredBeanDef);
+                }
+                // 赋值
+                args[i] = instance;
+            }
+        }
+
+        Object beanInstance = null;
+
+        if(beanDefinition.getFactoryMethod()!=null){
+            Object bean = getBean(beanDefinition.getFactoryName());
+            beanInstance = beanDefinition.getFactoryMethod().invoke(bean,args);
+        }else beanInstance = beanDefinition.getConstructor().newInstance(args);
+
+        String name = beanDefinition.getName();
+
+        // 到了这里才装配实例
+        // 事实上spring中做了更多（例如三级缓存）
+        beanDefinition.setInstance(beanInstance);
+        return beanInstance;
     }
 
     /**
@@ -48,11 +151,13 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
                 if(component!=null){
                     // bean的唯一名称
                     String beanName = ClassUtil.getBeanName(aClass);
+                    Method initMethod = ClassUtil.getInitMethod(aClass);
+                    Method destroyMethod = ClassUtil.getDestroyMethod(aClass);
                     BeanDefinition beanDefinition = new BeanDefinition(beanName, aClass, null, getConstructor(aClass),
                             // 工厂方法
                             null, null,
                             getOrder(aClass), aClass.isAssignableFrom(Primary.class),
-                            null, null,
+                            initMethod==null ? null : initMethod.getName(), destroyMethod== null?null:destroyMethod.getName(),
                             // init/destroy
                             ClassUtil.getInitMethod(aClass), ClassUtil.getDestroyMethod(aClass)
                     );
@@ -65,13 +170,14 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
                         // 将他们也扫描进来
                         for (Method declaredMethod : aClass.getDeclaredMethods()) {
                             Bean annotation = declaredMethod.getAnnotation(Bean.class);
+                            // 扫描Bean的工厂方法
                             if(annotation!=null){
                                 int modifiers = declaredMethod.getModifiers();
                                 // 只处理public修饰的方法
                                 if(Modifier.isPublic(modifiers)){
                                     Class<?> returnType = declaredMethod.getReturnType();
                                     BeanDefinition beanDefinitionFactory = new BeanDefinition(ClassUtil.getBeanName(declaredMethod), returnType,
-                                            null, null, null,
+                                            null, null, declaredMethod.getName(),
                                             declaredMethod, getOrder(declaredMethod),
                                             declaredMethod.isAnnotationPresent(Primary.class),
                                             annotation.initMethod(), annotation.destroyMethod(),
@@ -80,6 +186,7 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
                                 }
                             }
                         }
+
                     }
 
                 }
@@ -160,13 +267,13 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
 
     @Override
     public <T> T getBean(String name, Class<T> tClass) {
-//        return findBeanDefinition(name,tClass);
-        return null;
+        return findBean(name,tClass);
     }
 
     @Override
     public <T> T getBean(Class<T> tClass) {
-        return null;
+        BeanDefinition def = findBeanDef(tClass);
+        return tClass.cast(def.getInstance());
     }
 
     @Override
@@ -180,17 +287,18 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
     }
 
     @Override
-    public List<BeanDefinition> findBeanDefinitions(Class<?> type) {
+    public <T> List<T> findBeans(Class<T> type) {
         return beans.values().stream()
                 .filter(beanDefinition -> type.isAssignableFrom(beanDefinition.getClass()))
+                .map(beanDefinition -> type.cast(beanDefinition.getInstance()))
                 .collect(Collectors.toList());
     }
 
     @Override
-    public BeanDefinition findBeanDefinition(Class<?> type) throws NoUniqueBeanDefinitionException {
-        List<BeanDefinition> beanDefinitions = findBeanDefinitions(type);
+    public <T> T findBean(Class<T> type) throws NoUniqueBeanDefinitionException {
+        List<BeanDefinition> beanDefinitions = findBeanDefs(type);
         if(beanDefinitions.isEmpty()) return null;
-        else if(beanDefinitions.size() == 1) return beanDefinitions.get(0);
+        else if(beanDefinitions.size() == 1) return type.cast(beanDefinitions.get(0));
 
         // 多个Bean时寻找@Primary注解
         List<BeanDefinition> primaryDefs = beanDefinitions.stream()
@@ -201,16 +309,46 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
         }else if(primaryDefs.size()>1){
             throw new NoUniqueBeanDefinitionException(String.format("不存在全局唯一的bean: %s",type.getClass().getName()));
         }
-        return primaryDefs.get(0);
+        return type.cast(primaryDefs.get(0).getInstance());
     }
 
     @Override
-    public BeanDefinition findBeanDefinition(String name) {
+    public Object findBean(String name) {
+        return findBeanDef(name).getInstance();
+    }
+
+
+    private List<BeanDefinition> findBeanDefs(Class<?> type){
+        return beans.values().stream().filter(beanDefinition -> type.isAssignableFrom(beanDefinition.getAClass()))
+                .collect(Collectors.toList());
+    }
+
+    private BeanDefinition findBeanDef(Class<?> type){
+        return findBeanDefs(type).get(0);
+    }
+
+    private BeanDefinition findBeanDef(String name){
         return beans.get(name);
     }
 
+    private BeanDefinition findBeanDef(String name,Class<?> type){
+
+        BeanDefinition beanDefinition = beans.get(name);
+        if(beanDefinition == null) return null;
+
+        if(beanDefinition.getAClass().isAssignableFrom(type)) return beanDefinition;
+
+        return null;
+    }
+
+
     @Override
-    public BeanDefinition findBeanDefinition(String name, Class<?> type) {
+    public <T> T findBean(String name, Class<T> type) {
+
+        BeanDefinition beanDefinition = findBeanDef(name);
+        if(beanDefinition == null)return null;
+        if(type.isAssignableFrom(beanDefinition.getAClass())) return type.cast(beanDefinition.getInstance());
+
         return null;
     }
 
@@ -218,4 +356,6 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
     public Object createBean(BeanDefinition beanDefinition) {
         return null;
     }
+
+
 }

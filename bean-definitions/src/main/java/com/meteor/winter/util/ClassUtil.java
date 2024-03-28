@@ -73,6 +73,26 @@ public class ClassUtil {
         return name;
     }
 
+
+    /**
+     * 查找给定集合是否拥有指定注解
+     * @param aClass
+     * @return
+     */
+    public static <A extends Annotation> A getAnnotation(Annotation[] annotations,Class<A> aClass){
+        for (Annotation annotation : annotations) {
+            if(aClass.isInstance(annotation)) return aClass.cast(annotation);
+        }
+        return null;
+    }
+
+
+    /**
+     * 获取指定注解标注的方法
+     * @param aClass
+     * @param annotation
+     * @return
+     */
     private static Method findAnnotationMethod(Class<?> aClass,Class<? extends Annotation> annotation){
         List<Method> collect = Arrays.stream(aClass.getDeclaredMethods())
                 .filter(method -> method.isAnnotationPresent(annotation))

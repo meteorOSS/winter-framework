@@ -1,5 +1,6 @@
 package com.meteor.winter.context;
 
+import com.meteor.winter.annotation.Configuration;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.ToString;
@@ -39,4 +40,8 @@ public class BeanDefinition {
 
     private Method initMethod;
     private Method destroyMethod;
+
+    public boolean isConfigurationDef(){
+        return aClass.getAnnotation(Configuration.class) != null;
+    }
 }

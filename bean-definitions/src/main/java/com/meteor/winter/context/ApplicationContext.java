@@ -3,6 +3,7 @@ package com.meteor.winter.context;
 import java.util.List;
 
 public interface ApplicationContext extends AutoCloseable{
+
     /**
      * 是否存在指定name的Bean
      */

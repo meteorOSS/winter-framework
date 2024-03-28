@@ -5,13 +5,13 @@ import com.meteor.winter.exception.NoUniqueBeanDefinitionException;
 import java.util.List;
 
 public interface ConfigurableApplicationContext extends ApplicationContext {
-    List<BeanDefinition> findBeanDefinitions(Class<?> type);
+    <T> List<T> findBeans(Class<T> type);
 
-    BeanDefinition findBeanDefinition(Class<?> type) throws NoUniqueBeanDefinitionException;
+    <T> T findBean(Class<T> type) throws NoUniqueBeanDefinitionException;
 
-    BeanDefinition findBeanDefinition(String name);
+    <T> T findBean(String name);
 
-    BeanDefinition findBeanDefinition(String name,Class<?> type);
+    <T> T findBean(String name,Class<T> type);
 
     Object createBean(BeanDefinition beanDefinition);
 }
