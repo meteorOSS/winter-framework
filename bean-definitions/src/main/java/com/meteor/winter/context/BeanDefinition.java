@@ -14,7 +14,7 @@ import java.lang.reflect.Method;
 @Data
 @AllArgsConstructor
 @ToString
-public class BeanDefinition {
+public class BeanDefinition{
 
     // 唯一的bean名
     private String name;
@@ -44,4 +44,6 @@ public class BeanDefinition {
     public boolean isConfigurationDef(){
         return aClass.getAnnotation(Configuration.class) != null;
     }
+
+
 }

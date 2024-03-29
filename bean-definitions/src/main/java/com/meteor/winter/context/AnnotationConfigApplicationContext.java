@@ -35,23 +35,61 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
         this.propertyResolver = propertyResolver;
         this.creatingBeanNames = new HashSet<>();
 
-        System.out.println(this.beans.size());
+        Comparator<BeanDefinition> comparator = new Comparator<BeanDefinition>() {
+            @Override
+            public int compare(BeanDefinition o1, BeanDefinition o2) {
+                return o2.getOrder() - o1.getOrder();
+            }
+        };
+
 
         // @Configuration注解的必须先创建出来（因为其中包含了Bean)
         this.beans.values().stream().filter(this::isConfigurationDef)
-                .sorted()
+                .sorted(comparator)
                 .forEach(beanDefinition -> createBeanForce(beanDefinition));
+
 
         // 其他的Bean
         this.beans.values().stream().filter(beanDefinition -> beanDefinition.getInstance()==null) // 过滤出所有实例还为空的BeanDef
-                .sorted(new Comparator<BeanDefinition>() {
-                    @Override
-                    public int compare(BeanDefinition o1, BeanDefinition o2) {
-                        return o1.getOrder() - o2.getOrder();
-                    }
-                })
+                .sorted(comparator)
                 .collect(Collectors.toList())
                 .forEach(beanDefinition -> createBeanForce(beanDefinition));
+
+        // 注入依赖
+        this.beans.values().stream().forEach(beanDefinition -> injectProperties(beanDefinition,beanDefinition.getAClass(),beanDefinition.getInstance()));
+
+        // 此时所有工作已经完成，调用bean的init钩子
+        this.beans.values().stream().forEach(beanDefinition -> initBean(beanDefinition));
+
+    }
+
+
+    void destroyBean(BeanDefinition beanDefinition){
+
+
+        if(beanDefinition.getDestroyMethod() == null) return;
+
+        try {
+            beanDefinition.getDestroyMethod().invoke(beanDefinition.getInstance());
+        } catch (IllegalAccessException e) {
+            throw new RuntimeException(e);
+        } catch (InvocationTargetException e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+
+    void initBean(BeanDefinition beanDefinition){
+
+        if(beanDefinition.getInitMethod() == null) return;
+
+        try {
+            beanDefinition.getInitMethod().invoke(beanDefinition.getInstance());
+        } catch (IllegalAccessException e) {
+            throw new RuntimeException(e);
+        } catch (InvocationTargetException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private boolean isConfigurationDef(BeanDefinition beanDefinition){
@@ -65,7 +103,6 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
      */
     @SneakyThrows
     public Object createBeanForce(BeanDefinition beanDefinition){
-        System.out.println("createBean");
         // 检测到重复创建导致的依赖循环
         if(!this.creatingBeanNames.add(beanDefinition.getName())){
             throw new Exception(String.format("%s 出现依赖注入循环",beanDefinition.getName()));
@@ -135,6 +172,86 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
         System.out.println(log);
     }
 
+
+    /**
+     * 对字段和set方法进行注入
+     * @param beanDefinition
+     * @param aClass
+     */
+    void injectProperties(BeanDefinition beanDefinition,Class<?> aClass,Object bean){
+
+        for (Field declaredField : aClass.getDeclaredFields()) {
+            tryInject(beanDefinition,aClass,bean,declaredField);
+        }
+
+        for (Method declaredMethod : aClass.getDeclaredMethods()) {
+            tryInject(beanDefinition,aClass,bean,declaredMethod);
+        }
+
+        // 在父类继续递归处理
+        Class<?> superclass = aClass.getSuperclass();
+        injectProperties(beanDefinition,superclass,bean);
+    }
+
+    /**
+     * 尝试对某个字段进行注入
+     * @param beanDefinition
+     * @param aClass
+     * @param bean
+     * @param accessibleObject
+     */
+    void tryInject(BeanDefinition beanDefinition,Class<?> aClass,Object bean,AccessibleObject accessibleObject){
+
+        Autowired autowired = accessibleObject.getAnnotation(Autowired.class);
+        Value value = accessibleObject.getAnnotation(Value.class);
+
+        if(autowired==null&&value==null) return;
+
+        accessibleObject.setAccessible(true);
+
+        Field field = null;
+        Method method = null;
+
+        if(accessibleObject instanceof Field) field = (Field) accessibleObject;
+        else if(accessibleObject instanceof Method) method = (Method) accessibleObject;
+
+        String beanName = field!=null ? field.getName() : method.getName();
+        Class<?> type = field!=null ? field.getType() : method.getParameterTypes()[0];
+
+        // 其实不应该用这么大作用域的try包裹，不过谁在乎呢
+        try {
+
+            if(field!=null){
+                if(value!=null){
+                    field.set(bean,propertyResolver.getProperty(value.value(),type));
+                }
+                if(autowired!=null){
+                    String name = autowired.name();
+                    Object depends = name.isEmpty() ? findBean(type) : findBean(name, type);
+                    if(depends!=null){
+                        field.set(bean,depends);
+                    }
+                }
+            }
+            if(method!=null){
+                if(value!=null){
+                    method.invoke(bean,propertyResolver.getProperty(value.value(),type));
+                }
+                if(autowired!=null){
+                    String name = autowired.name();
+                    Object depends = name.isEmpty() ? findBeans(type) : findBean(name,type);
+                    method.invoke(bean,depends);
+                }
+            }
+        }catch (Exception exception){
+
+        }
+
+
+
+
+    }
+
     /**
      * 根据ClassName集合创建BeanDefinition字典
      * @param classNames
@@ -194,10 +311,11 @@ public class AnnotationConfigApplicationContext implements ConfigurableApplicati
                 throw new RuntimeException(e);
             }
         }
-
         return beanDefinitionMap;
-
     }
+
+
+
 
     int getOrder(Method method) {
         Order order = method.getAnnotation(Order.class);

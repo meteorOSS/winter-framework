@@ -2,41 +2,49 @@ import com.meteor.winter.annotation.ComponentScan;
 import com.meteor.winter.context.AnnotationConfigApplicationContext;
 import com.meteor.winter.context.BeanDefinition;
 import com.meteor.winter.io.PropertyResolver;
+import com.meteor.winter.util.YamlUtil;
 import test.AppConfig;
-import test.pojo.Student;
+import test.pojo.Apple;
 
+import java.util.Map;
 import java.util.Properties;
 
 public class TestAppConfig {
-    public static void main(String[] args) {
-        AnnotationConfigApplicationContext annotationConfigApplicationContext = new AnnotationConfigApplicationContext(AppConfig.class
-        , createPropertyResolver());
-        annotationConfigApplicationContext.getBeans().values().forEach(System.out::println);
-        Student student = annotationConfigApplicationContext.getBean("Student", Student.class);
-        System.out.println(student.getApp());
-    }
 
     static PropertyResolver createPropertyResolver() {
         Properties ps = new Properties();
-        ps.put("app.title", "Scan App");
-        ps.put("app.version", "v1.0");
-        ps.put("jdbc.url", "jdbc:hsqldb:file:testdb.tmp");
-        ps.put("jdbc.username", "sa");
-        ps.put("jdbc.password", "");
-        ps.put("convert.boolean", "true");
-        ps.put("convert.byte", "123");
-        ps.put("convert.short", "12345");
-        ps.put("convert.integer", "1234567");
-        ps.put("convert.long", "123456789000");
-        ps.put("convert.float", "12345.6789");
-        ps.put("convert.double", "123456789.87654321");
-        ps.put("convert.localdate", "2023-03-29");
-        ps.put("convert.localtime", "20:45:01");
-        ps.put("convert.localdatetime", "2023-03-29T20:45:01");
-        ps.put("convert.zoneddatetime", "2023-03-29T20:45:01+08:00[Asia/Shanghai]");
-        ps.put("convert.duration", "P2DT3H4M");
-        ps.put("convert.zoneid", "Asia/Shanghai");
+        ps.put("name", "apple");
+        ps.put("price", "10$");
+        ps.put("description", "这是IOC容器管理的一颗苹果");
         PropertyResolver pr = new PropertyResolver(ps);
         return pr;
     }
+
+    public static void main(String[] args) {
+        info();
+        Map<String, Object> objectMap = YamlUtil.loadYamlAsPlainMap("context.yml");
+        Properties properties = new Properties();
+        properties.putAll(objectMap);
+        PropertyResolver resolver = new PropertyResolver(properties);
+
+        AnnotationConfigApplicationContext annotationConfigApplicationContext =
+                new AnnotationConfigApplicationContext(AppConfig.class, resolver);
+
+        annotationConfigApplicationContext.getBeans().values().forEach(System.out::println);
+        Apple apple = annotationConfigApplicationContext.getBean("Apple", Apple.class);
+        System.out.println(apple);
+    }
+
+
+    static void info(){
+        System.out.println("\n" +
+                " __      __ .__           __                   \n" +
+                "/  \\    /  \\|__|  ____  _/  |_   ____  _______ \n" +
+                "\\   \\/\\/   /|  | /    \\ \\   __\\_/ __ \\ \\_  __ \\\n" +
+                " \\        / |  ||   |  \\ |  |  \\  ___/  |  | \\/\n" +
+                "  \\__/\\  /  |__||___|  / |__|   \\___  > |__|   \n" +
+                "       \\/            \\/             \\/         \n");
+    }
+
+
 }
